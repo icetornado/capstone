@@ -1,0 +1,221 @@
+---
+title: "Data Science Capstone - Data Exploration"
+author: "Trieu Tran"
+date: "April 29, 2016"
+output: html_document
+---
+###Overview
+This is the Milestone Report for the Data Science Capstone Project. The goal of this project begins with cleaning and transforming a massive amount of text collected from different internet sources such as Blogs, News, and Twitter into a structured format.  The next steps will be analyzing the processed text data, and then sampling data and buidling a predictive text model.  Finally, a complete Data Product Application will be presented to demonstrate its text predictive function. 
+
+This Milestone Report covers the very first step of the project which involves data cleaning, exploratory analysis tasks and a brief summary of planning for the next steps of the project.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tm)
+library(SnowballC)
+library(RWeka)
+library(doParallel)
+library(ggplot2)
+setwd(file.path("~", "R programming", "capstone"))
+registerDoParallel()
+options(mc.cores=4)
+```
+
+
+```{r echo=TRUE, cache=TRUE, message=FALSE, warning=FALSE}
+
+## reading files
+conn <- file(file.path("final","en_US", "en_US.twitter.txt"), "r", encoding='UTF-8')
+twitter <- readLines(conn)
+close(conn)
+## stripping emoji, non-ascii char
+twitter <- iconv(twitter, "UTF-8", "ASCII", sub="")
+twittSentenceCn <- 0
+for(i in 1:length(twitter)) {
+        twittSentenceCn <- twittSentenceCn + length(gregexpr('[[:alnum:] ][.!?]', twitter[i])[[1]])
+}
+
+## 3701902
+
+conn <- file(file.path("final","en_US", "en_US.blogs.txt"), "r", encoding='UTF-8')
+blogs <- readLines(conn)
+close(conn)
+blogs <- iconv(blogs, "UTF-8", "ASCII", sub="")
+blogsSentenceCn <- 0
+for(i in 1:length(blogs)) {
+        blogsSentenceCn <- blogsSentenceCn + length(gregexpr('[[:alnum:] ][.!?]', blogs[i])[[1]])
+}
+## blog sentence: 2420195
+
+conn <- file(file.path("final","en_US", "en_US.news.txt"), "r", encoding='UTF-8')
+news <- readLines(conn)
+close(conn)
+news <- iconv(news, "UTF-8", "ASCII", sub="")
+newsSentenceCn <- 0
+for(i in 1:length(news)) {
+        newsSentenceCn <- newsSentenceCn + length(gregexpr('[[:alnum:] ][.!?]', news[i])[[1]])
+}
+
+## news 2241851
+```
+
+#### Text files:
+File            | Size          | Lines         | Words
+----------------|---------------|---------------|-------------
+blogs	        | 201M          | 899,288       | 37,334,114
+news	        | 197M          | 1,010,242     | 34,365,936
+twitter	        | 160M	        | 2,360,148	| 30,359,804
+
+We randomly extract 1 percent of the total number of lines from each files in order to conduct our data exploratory task.  Then we use a function of the <strong>tm</strong> package to create a corpora from the extracted sample. 
+
+###Data Cleaning
+
+As we can see the text data comes from diffent sources with different formats and different writing styles.  For example, "Twitts" use a "liberal" style that incorporates mispelled or made-up words are common, and it may also include a lot of non-character elements such as emoji, image icons.  This is quite contrary with the formal writing style from News).  Regardless of the source, English text always contains unimportant "stopwords" (like <em>and</em> or <em>the</em>) that do not contribute any value for the text predictive task.  We also need to exclude punctuation, numbers and extra whitespaces between words. 
+
+####Importing data
+```{r echo=TRUE, cache=TRUE, message=FALSE, warning=FALSE}
+## create samples for each file
+set.seed(124567)
+sampleTwitts <- sample(twitter, size = length(twitter) * 0.01)
+sampleBlogs <- sample(blogs, size = length(blogs) * 0.01)
+sampleNews <- sample(news, size = length(news) * 0.01)
+
+samples <- c(sampleTwitts, sampleBlogs, sampleNews)
+
+vs <- VectorSource(samples)
+docs <- VCorpus(vs)
+```
+
+####Cleaning and Stemming Steps:
+* Clean up hashtags.  We want to keep the character components of hashtags because they may contain some important words (eg. hashtag: #president, we want to keep "president"). 
+* Remove all punctuation
+* Remove hyperlinks 
+* Remove the part after "@" in email addresses
+* Transform text to all lower case
+* Remove all English stopwords
+* Remove numbers
+* Strip whitespaces
+* Stemming
+
+### TO DOs ###
+### training data set about 50,000 sentences
+### Remove RT|via " #gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", sampleText)
+### # Clear the memory rm(blogs, news, twitter, combinedText)
+### saveRDS(corpus, file = "corpus.rds")
+### read from RDS
+```{r echo=TRUE, cache=TRUE, message=FALSE, warning=FALSE}
+
+removeMostPunctuation <- function (x, keepHashtag = FALSE) {
+    rmpunct <- function(x) {
+        x <- gsub("#", "\002", x)
+        x <- gsub("[[:punct:]]+", "", x)
+        gsub("\002", "#", x, fixed = TRUE)
+    }
+    
+    if (keepHashtag) { 
+        x <- gsub("(\\w)-(\\w)", "\\1\001\\2", x)
+        x <- rmpunct(x)
+        gsub("\001", "-", x, fixed = TRUE)
+    } 
+    else {
+        rmpunct(x)
+    }
+}
+
+docs <- tm_map(docs, content_transformer(removeMostPunctuation), keepHash = TRUE)
+
+cleaningCorpus <- function(x, pattern) {
+        gsub(pattern, " ", x)       
+}
+
+###remove hyperlinks, anything after @ in email addresses, or in twitter @
+patterns = c("(f|ht)tp(s?)://(.*)[.][a-z]+", "@[^\\s]+");
+
+for(p in patterns) {
+       docs <- tm_map(docs, content_transformer(cleaningCorpus), pattern = p) 
+}
+
+### transfrom tolower
+docs <- tm_map(docs, tolower) 
+
+### remove stop words
+docs <- tm_map(docs, removeWords, stopwords("english"))
+## strip white spaces
+docs <- tm_map(docs, removeNumbers)
+docs <- tm_map(docs, stripWhitespace)
+
+### stemming
+docs <- tm_map(docs, stemDocument)
+
+### finalizing
+docs <- tm_map(docs, PlainTextDocument)
+```
+
+### Data Exploratory
+
+#### Create N-grams
+
+The objective of this project is building a text predictive model.  We have use N-grams that help us to guess the best next word based on users' previous word(s).  An "N-gram" is a sequence of N items-letters, or words with high probablity occurance in text data. One of the applications of N-grams is suggesting words.  If we imagine that the first word is "I", and in a 2-gram sequence, the phrase "I like" is the most common (or has the highest probability), then our text predictive model will suggest the word "like" as the next word following "I".  And if the user accept the word "like", and if in a 3-gram sequence, the phrase "I like dog" is the most common, then "dog" or "dogs" would be the third suggested word.
+
+We use <strong>RWeka</strong> package in conjunction with the <strong>tm</strong> package to create N-gram models.
+
+```{r echo=TRUE, cache=TRUE, message=FALSE, warning=FALSE}
+#tdm <- TermDocumentMatrix(docs)
+options(mc.cores=1)
+bigramToken <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+trigramToken <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+
+makeWordCountDF <- function(d) {
+    cn <- sort(rowSums(as.matrix(d)), decreasing = TRUE)
+    df <- data.frame(phrase = names(cn), cn = cn)       #may need to transform it into "assoc array" for better
+                                                        # performance
+    return(df)
+}
+
+## get word counts from n-grams
+wordcount1 <- makeWordCountDF(removeSparseTerms(TermDocumentMatrix(docs, control=list(tokenize = NGramTokenizer)), 0.9999))
+wordcount2 <- makeWordCountDF(removeSparseTerms(TermDocumentMatrix(docs, control = list(tokenize = bigramToken)), 0.9999))
+wordcount3 <- makeWordCountDF(removeSparseTerms(TermDocumentMatrix(docs, control = list(tokenize = trigramToken)), 0.9999))
+```
+
+####Data visualization
+
+```{r echo = FALSE, cache=TRUE, message=FALSE, warning=FALSE}
+plot1 <- ggplot(wordcount1[1:50,], aes(reorder(phrase, -cn), cn)) +
+         labs(x = "Unigram", y = "Frequency") +
+         theme(axis.text.x = element_text(angle = 60, size = 12, hjust = 1)) +
+         geom_bar(stat = "identity", fill = I("#2395BF"))
+
+ggsave(file.path("figure", "plot1.png"), width=7.2, height=4.8, dpi=100)
+
+plot2 <- ggplot(wordcount2[1:50,], aes(reorder(phrase, -cn), cn)) +
+         labs(x = "2-gram", y = "Frequency") +
+         theme(axis.text.x = element_text(angle = 60, size = 12, hjust = 1)) +
+         geom_bar(stat = "identity", fill = I("#D193BD"))
+ggsave(file.path("figure", "plot2.png"), width=7.2, height=4.8, dpi=100)
+plot3 <- ggplot(wordcount2[1:50,], aes(reorder(phrase, -cn), cn)) +
+         labs(x = "3-gram", y = "Frequency") +
+         theme(axis.text.x = element_text(angle = 60, size = 12, hjust = 1)) +
+         geom_bar(stat = "identity", fill = I("#D19339"))
+ggsave(file.path("figure", "plot3.png"), width=7.2, height=4.8, dpi=100)
+```
+##### Top 50 Unigram
+
+![](figure/plot1.png)
+
+#### Top 50 2-gram
+
+![](figure/plot2.png)
+
+#### Top 50 3-gram
+
+![](figure/plot3.png)
+
+### Planning for Prediction Model and Shiny Application
+The N-grams can show us some potential for text prediction.  However some fine tuning tasks such as "smoothing" for unobserved N-grams, optimizing the N-grams' sizes to improve the performance, or even experimenting with other text predictive algorithm will be also considered.
+
+The Shiny Application will be a simple interface with a input box in which the user can type.  A list of word in a "hinting box" will be displayed along with user's typing.  Hint words can be either auto-completion words or the next best ones.
+``` {r echo=TRUE}
+#source(file.path("contractions.R"))
+#head(contractions, 5)
+```

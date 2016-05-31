@@ -1,0 +1,7 @@
+.Rproj.user
+.Rhistory
+.RData
+rsconnect/*
+final/*
+project_cache/*
+project_pitch-figure/*
